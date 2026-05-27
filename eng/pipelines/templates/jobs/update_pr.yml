@@ -7,7 +7,9 @@ trigger:
 - main
 
 variables:
-  skipComponentGovernanceDetection: true
+  - template: /eng/pipelines/templates/variables/image.yml
+  - name: skipComponentGovernanceDetection
+    value: true
 
 pool:
   name: $(LINUXPOOL)
