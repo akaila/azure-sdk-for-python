@@ -10,6 +10,7 @@ from ci_tools.github_tools import manage_git_folder, configure_user
 
 from git import Repo
 from github import Github
+import github.Auth
 
 from . import build_packaging_by_package_name
 
@@ -20,7 +21,7 @@ _SDK_FOLDER_RE = re.compile(r"^(sdk/[\w-]+)/(azure[\w-]+)/", re.ASCII)
 
 def update_pr(gh_token, repo_id, pr_number):
 
-    con = Github(gh_token)
+    con = Github(auth=github.Auth.Token(gh_token))
     repo = con.get_repo(repo_id)
     sdk_pr = repo.get_pull(pr_number)
     files = [one_file.filename for one_file in sdk_pr.get_files() if one_file.status not in ["removed"]]

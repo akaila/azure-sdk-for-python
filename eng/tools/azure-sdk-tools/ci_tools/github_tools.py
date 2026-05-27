@@ -58,6 +58,15 @@ def user_from_token(gh_token):
     return github_con.get_user()
 
 
+def _login_from_token(gh_token):
+    """Get user login from token, falling back to 'x-access-token' for GitHub App tokens."""
+    try:
+        return user_from_token(gh_token).login
+    except GithubException:
+        _LOGGER.info("Unable to get user login from token, using 'x-access-token' (GitHub App token)")
+        return "x-access-token"
+
+
 def create_comment(github_object, body):
     """Create a comment, whatever the object is a PR, a commit or an issue."""
     try:
@@ -86,15 +95,22 @@ def configure_user(gh_token, repo):
     """git config --global user.email "you@example.com"
     git config --global user.name "Your Name"
     """
-    user = user_from_token(gh_token)
-    repo.git.config("user.email", user.email or "adxpysdk@microsoft.com")
-    repo.git.config("user.name", user.name or "SwaggerToSDK Automation")
+    try:
+        user = user_from_token(gh_token)
+        email = user.email or "adxpysdk@microsoft.com"
+        name = user.name or "SwaggerToSDK Automation"
+    except GithubException:
+        _LOGGER.info("Unable to get user info from token, using defaults (GitHub App token)")
+        email = "adxpysdk@microsoft.com"
+        name = "SwaggerToSDK Automation"
+    repo.git.config("user.email", email)
+    repo.git.config("user.name", name)
 
 
 def get_full_sdk_id(gh_token, sdk_git_id):
     """If the SDK git id is incomplete, try to complete it with user login"""
     if not "/" in sdk_git_id:
-        login = user_from_token(gh_token).login
+        login = _login_from_token(gh_token)
         return "{}/{}".format(login, sdk_git_id)
     return sdk_git_id
 
@@ -176,7 +192,7 @@ def clone_to_path(gh_token, folder, sdk_git_id, branch_or_commit=None, *, pr_num
 
     credentials_part = ""
     if gh_token:
-        login = user_from_token(gh_token).login
+        login = _login_from_token(gh_token)
         credentials_part = "{user}:{token}@".format(user=login, token=gh_token)
     else:
         _LOGGER.warning("Will clone the repo without writing credentials")
