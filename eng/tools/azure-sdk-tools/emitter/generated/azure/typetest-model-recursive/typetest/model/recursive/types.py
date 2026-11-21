@@ -6,7 +6,6 @@
 # Changes may cause incorrect behavior and will be lost if the code is regenerated.
 # --------------------------------------------------------------------------
 
-from typing import Optional
 from typing_extensions import Required, TypedDict
 
 
@@ -14,17 +13,17 @@ class Element(TypedDict, total=False):
     """element.
 
     :ivar extension:
-    :vartype extension: list[~typetest.model.recursive.models.Extension]
+    :vartype extension: list["Extension"]
     """
 
-    extension: Optional[list["Extension"]]
+    extension: list["Extension"]
 
 
 class Extension(Element):
     """extension.
 
     :ivar extension:
-    :vartype extension: list[~typetest.model.recursive.models.Extension]
+    :vartype extension: list["Extension"]
     :ivar level: Required.
     :vartype level: int
     """
