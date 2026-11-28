@@ -103,6 +103,29 @@ def _serialize_bytes(o, format: typing.Optional[str] = None) -> str:
     return encoded
 
 
+def _serialize_duration(td: timedelta, format: typing.Optional[str] = None):
+    """Serialize a timedelta to its wire representation.
+
+    For the ``seconds``/``milliseconds`` encodings the value is converted to a
+    numeric value, otherwise it falls back to an ISO 8601 duration string.
+
+    :param timedelta td: The timedelta to serialize.
+    :param str format: The duration encoding format.
+    :rtype: int or float or str
+    :return: serialized duration
+    """
+    seconds = td.total_seconds()
+    if format == "duration-seconds-int":
+        return int(seconds)
+    if format == "duration-seconds-float":
+        return seconds
+    if format == "duration-milliseconds-int":
+        return int(seconds * 1000)
+    if format == "duration-milliseconds-float":
+        return seconds * 1000
+    return _timedelta_as_isostr(td)
+
+
 def _serialize_datetime(o, format: typing.Optional[str] = None):
     if hasattr(o, "year") and hasattr(o, "hour"):
         if format == "rfc7231":
@@ -129,7 +152,15 @@ def _is_readonly(p):
 
 
 class SdkJSONEncoder(JSONEncoder):
-    """A JSON encoder that's capable of serializing datetime objects and bytes."""
+    """A JSON encoder that's capable of serializing datetime objects and bytes.
+
+    :param args: Additional positional arguments passed to the base ``JSONEncoder``.
+    :type args: typing.Any
+    :keyword exclude_readonly: Whether to exclude readonly properties. Defaults to False.
+    :paramtype exclude_readonly: bool
+    :keyword format: The format to use for serialization. Defaults to None.
+    :paramtype format: typing.Optional[str]
+    """
 
     def __init__(self, *args, exclude_readonly: bool = False, format: typing.Optional[str] = None, **kwargs):
         super().__init__(*args, **kwargs)
@@ -295,6 +326,12 @@ def _deserialize_duration(attr):
     return isodate.parse_duration(attr)
 
 
+def _deserialize_duration_numeric(attr, unit):
+    if isinstance(attr, timedelta):
+        return attr
+    return timedelta(**{unit: float(attr)})
+
+
 def _deserialize_decimal(attr):
     if isinstance(attr, decimal.Decimal):
         return attr
@@ -305,6 +342,12 @@ def _deserialize_int_as_str(attr):
     if isinstance(attr, int):
         return attr
     return int(attr)
+
+
+def _deserialize_bool_as_str(attr):
+    if isinstance(attr, bool):
+        return attr
+    return attr.lower() == "true"
 
 
 _DESERIALIZE_MAPPING = {
@@ -324,12 +367,18 @@ _DESERIALIZE_MAPPING_WITHFORMAT = {
     "unix-timestamp": _deserialize_datetime_unix_timestamp,
     "base64": _deserialize_bytes,
     "base64url": _deserialize_bytes_base64,
+    "duration-seconds-int": functools.partial(_deserialize_duration_numeric, unit="seconds"),
+    "duration-seconds-float": functools.partial(_deserialize_duration_numeric, unit="seconds"),
+    "duration-milliseconds-int": functools.partial(_deserialize_duration_numeric, unit="milliseconds"),
+    "duration-milliseconds-float": functools.partial(_deserialize_duration_numeric, unit="milliseconds"),
 }
 
 
 def get_deserializer(annotation: typing.Any, rf: typing.Optional["_RestField"] = None):
     if annotation is int and rf and rf._format == "str":
         return _deserialize_int_as_str
+    if annotation is bool and rf and rf._format == "str":
+        return _deserialize_bool_as_str
     if annotation is str and rf and rf._format in _ARRAY_ENCODE_MAPPING:
         return functools.partial(_deserialize_array_encoded, _ARRAY_ENCODE_MAPPING[rf._format])
     if rf and rf._format:
@@ -419,21 +468,21 @@ class _MyMutableMapping(MutableMapping[str, typing.Any]):
 
     def keys(self) -> typing.KeysView[str]:
         """
-        :returns: a set-like object providing a view on D's keys
+        :returns: a set-like object providing a view on the mapping's keys
         :rtype: ~typing.KeysView
         """
         return self._data.keys()
 
     def values(self) -> typing.ValuesView[typing.Any]:
         """
-        :returns: an object providing a view on D's values
+        :returns: an object providing a view on the mapping's values
         :rtype: ~typing.ValuesView
         """
         return self._data.values()
 
     def items(self) -> typing.ItemsView[str, typing.Any]:
         """
-        :returns: set-like object providing a view on D's items
+        :returns: a set-like object providing a view on the mapping's items
         :rtype: ~typing.ItemsView
         """
         return self._data.items()
@@ -443,7 +492,7 @@ class _MyMutableMapping(MutableMapping[str, typing.Any]):
         Get the value for key if key is in the dictionary, else default.
         :param str key: The key to look up.
         :param any default: The value to return if key is not in the dictionary. Defaults to None
-        :returns: D[k] if k in D, else d.
+        :returns: The value for key if key is in the dictionary, else default.
         :rtype: any
         """
         try:
@@ -478,19 +527,19 @@ class _MyMutableMapping(MutableMapping[str, typing.Any]):
         Removes and returns some (key, value) pair
         :returns: The (key, value) pair.
         :rtype: tuple
-        :raises KeyError: if D is empty.
+        :raises KeyError: if the dictionary is empty.
         """
         return self._data.popitem()
 
     def clear(self) -> None:
         """
-        Remove all items from D.
+        Remove all items from the dictionary.
         """
         self._data.clear()
 
     def update(self, *args: typing.Any, **kwargs: typing.Any) -> None:  # pylint: disable=arguments-differ
         """
-        Updates D from mapping/iterable E and F.
+        Update the dictionary from a mapping or an iterable of key-value pairs.
         :param any args: Either a mapping object or an iterable of key-value pairs.
         """
         self._data.update(*args, **kwargs)
@@ -503,10 +552,11 @@ class _MyMutableMapping(MutableMapping[str, typing.Any]):
 
     def setdefault(self, key: str, default: typing.Any = _UNSET) -> typing.Any:
         """
-        Same as calling D.get(k, d), and setting D[k]=d if k not found
+        Return the value for key if key is in the dictionary; otherwise set the key to
+        default and return default.
         :param str key: The key to look up.
         :param any default: The value to set if key is not in the dictionary
-        :returns: D[k] if k in D, else d.
+        :returns: The value for key if key is in the dictionary, else default.
         :rtype: any
         """
         if default is _UNSET:
@@ -558,7 +608,7 @@ def _serialize(o, format: typing.Optional[str] = None):  # pylint: disable=too-m
         pass
     # Last, try datetime.timedelta
     try:
-        return _timedelta_as_isostr(o)
+        return _serialize_duration(o, format)
     except AttributeError:
         # This will be raised when it hits value.total_seconds in the method above
         pass
@@ -819,9 +869,6 @@ def _build_xml_field_plan(  # pylint: disable=docstring-missing-return, docstrin
 # pylint: enable=docstring-missing-param
 class Model(_MyMutableMapping):
     _is_model = True
-    # label whether current class's _attr_to_rest_field has been calculated
-    # could not see _attr_to_rest_field directly because subclass inherits it from parent class
-    _calculated: set[str] = set()
 
     def __init__(self, *args: typing.Any, **kwargs: typing.Any) -> None:
         class_name = self.__class__.__name__
@@ -962,18 +1009,28 @@ class Model(_MyMutableMapping):
         return Model(self.__dict__)
 
     def __new__(cls, *args: typing.Any, **kwargs: typing.Any) -> Self:
-        if f"{cls.__module__}.{cls.__qualname__}" not in cls._calculated:
+        # First time we build this class, compute its field metadata and cache it on the class.
+        # Check `cls.__dict__` (this class's own attrs), not a shared set: subclasses inherit
+        # `_attr_to_rest_field`, so this is only True once *this* class is done. No lock needed.
+        if "_attr_to_rest_field" not in cls.__dict__:
             # we know the last nine classes in mro are going to be 'Model', '_MyMutableMapping', 'MutableMapping',
             # 'Mapping', 'Collection', 'Sized', 'Iterable', 'Container' and 'object'
             mros = cls.__mro__[:-9][::-1]  # ignore parents, and reverse the mro order
+            # Read from a copy (`dict(...)`), not the original: another thread building a parent class
+            # may write its cache into that parent's attrs at the same time, and reading the original
+            # while it changes raises "dictionary changed size during iteration" (silently swallowed
+            # during deserialization, returning raw JSON). The copy has the same fields anyway.
             attr_to_rest_field: dict[str, _RestField] = {  # map attribute name to rest_field property
-                k: v for mro_class in mros for k, v in mro_class.__dict__.items() if k[0] != "_" and hasattr(v, "_type")
+                k: v
+                for mro_class in mros
+                for k, v in dict(mro_class.__dict__).items()
+                if k[0] != "_" and hasattr(v, "_type")
             }
             annotations = {
                 k: v
                 for mro_class in mros
                 if hasattr(mro_class, "__annotations__")
-                for k, v in mro_class.__annotations__.items()
+                for k, v in dict(mro_class.__annotations__).items()
             }
             for attr, rf in attr_to_rest_field.items():
                 rf._module = cls.__module__
@@ -981,11 +1038,14 @@ class Model(_MyMutableMapping):
                     rf._type = rf._get_deserialize_callable_from_annotation(annotations.get(attr, None))
                 if not rf._rest_name_input:
                     rf._rest_name_input = attr
-            cls._attr_to_rest_field: dict[str, _RestField] = dict(attr_to_rest_field.items())
             # Build XML field plan for fast _init_from_xml (only for XML models)
             if getattr(cls, "_xml", None):
                 cls._xml_field_plan = _build_xml_field_plan(cls, attr_to_rest_field)
-            cls._calculated.add(f"{cls.__module__}.{cls.__qualname__}")
+            # Set `_attr_to_rest_field` LAST: it's the "done" flag checked above, so the extra maps
+            # are set first and are ready before another thread sees it. Built as a local and assigned
+            # in one step, never mutated after - readers always see a complete map. Two threads racing
+            # here just build the same map twice (harmless), so no lock is needed.
+            cls._attr_to_rest_field: dict[str, _RestField] = dict(attr_to_rest_field)
 
         return super().__new__(cls)
 
@@ -996,7 +1056,7 @@ class Model(_MyMutableMapping):
 
     @classmethod
     def _get_discriminator(cls, exist_discriminators) -> typing.Optional["_RestField"]:
-        for v in cls.__dict__.values():
+        for v in dict(cls.__dict__).values():
             if isinstance(v, _RestField) and v._is_discriminator and v._rest_name not in exist_discriminators:
                 return v
         return None
